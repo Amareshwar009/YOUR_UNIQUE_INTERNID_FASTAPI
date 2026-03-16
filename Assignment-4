@@ -1,0 +1,181 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from typing import Optional, List
+
+app = FastAPI(title="E-Commerce Cart System")
+
+products = [
+    {"id": 1, "name": "Pen Set", "price": 49, "category": "Stationery", "in_stock": True},
+    {"id": 2, "name": "Notebook", "price": 99, "category": "Stationery", "in_stock": True},
+    {"id": 3, "name": "Wireless Mouse", "price": 499, "category": "Electronics", "in_stock": False},
+    {"id": 4, "name": "USB Cable", "price": 199, "category": "Electronics", "in_stock": True},
+    {"id": 5, "name": "Laptop Stand", "price": 1299, "category": "Electronics", "in_stock": True},
+    {"id": 6, "name": "Mechanical Keyboard", "price": 2499, "category": "Electronics", "in_stock": True},
+]
+
+cart = []
+orders = []
+order_counter = 1
+
+
+class AddToCartRequest(BaseModel):
+    product_id: int = Field(..., gt=0)
+    quantity: int = Field(default=1, gt=0, le=50)
+
+
+class CheckoutRequest(BaseModel):
+    customer_name: str = Field(..., min_length=2, max_length=100)
+    address: str = Field(..., min_length=5, max_length=200)
+
+
+@app.get("/")
+def home():
+    return {"message": "Welcome to E-Commerce Cart System"}
+
+
+@app.get("/products")
+def get_products():
+    return {"products": products, "total": len(products)}
+
+
+@app.post("/cart/add", status_code=201)
+def add_to_cart(request: AddToCartRequest):
+    product = next((p for p in products if p["id"] == request.product_id), None)
+    
+    if not product:
+        raise HTTPException(status_code=404, detail=f"Product ID {request.product_id} not found")
+    
+    if not product["in_stock"]:
+        raise HTTPException(status_code=400, detail=f"{product['name']} is out of stock")
+    
+    existing_item = next((item for item in cart if item["product_id"] == request.product_id), None)
+    
+    if existing_item:
+        existing_item["quantity"] += request.quantity
+        existing_item["subtotal"] = existing_item["quantity"] * product["price"]
+        
+        return {
+            "message": "Cart updated",
+            "product": product["name"],
+            "new_quantity": existing_item["quantity"],
+            "subtotal": existing_item["subtotal"],
+            "cart_item_count": len(cart),
+            "grand_total": sum(item["subtotal"] for item in cart)
+        }
+    
+    else:
+        new_item = {
+            "product_id": product["id"],
+            "product_name": product["name"],
+            "price": product["price"],
+            "quantity": request.quantity,
+            "subtotal": product["price"] * request.quantity
+        }
+        cart.append(new_item)
+        
+        return {
+            "message": "Item added to cart",
+            "product": product["name"],
+            "quantity": request.quantity,
+            "subtotal": new_item["subtotal"],
+            "cart_item_count": len(cart),
+            "grand_total": sum(item["subtotal"] for item in cart)
+        }
+
+
+@app.get("/cart")
+def view_cart():
+    if not cart:
+        return {"message": "Cart is empty", "items": [], "item_count": 0, "grand_total": 0}
+    
+    grand_total = sum(item["subtotal"] for item in cart)
+    
+    return {
+        "items": cart,
+        "item_count": len(cart),
+        "grand_total": grand_total
+    }
+
+
+@app.delete("/cart/item/{product_id}")
+def remove_from_cart(product_id: int):
+    global cart
+    
+    item = next((item for item in cart if item["product_id"] == product_id), None)
+    
+    if not item:
+        raise HTTPException(status_code=404, detail=f"Product ID {product_id} not in cart")
+    
+    removed_item = item
+    cart = [item for item in cart if item["product_id"] != product_id]
+    
+    grand_total = sum(item["subtotal"] for item in cart)
+    
+    return {
+        "message": f"Removed {removed_item['product_name']} from cart",
+        "removed_item": removed_item,
+        "cart_item_count": len(cart),
+        "grand_total": grand_total
+    }
+
+
+@app.post("/cart/checkout", status_code=201)
+def checkout(request: CheckoutRequest):
+    global order_counter, cart
+    
+    if not cart:
+        raise HTTPException(status_code=400, detail="Cart is empty — add items first")
+    
+    created_orders = []
+    grand_total = sum(item["subtotal"] for item in cart)
+    
+    for item in cart:
+        new_order = {
+            "order_id": order_counter,
+            "customer_name": request.customer_name,
+            "address": request.address,
+            "product_id": item["product_id"],
+            "product": item["product_name"],
+            "quantity": item["quantity"],
+            "price": item["price"],
+            "subtotal": item["subtotal"],
+            "status": "confirmed"
+        }
+        orders.append(new_order)
+        created_orders.append(new_order)
+        order_counter += 1
+    
+    total_spent = sum(item["subtotal"] for item in cart)
+    cart = []
+    
+    return {
+        "message": "Checkout successful",
+        "customer_name": request.customer_name,
+        "address": request.address,
+        "orders_created": created_orders,
+        "total_orders": len(created_orders),
+        "grand_total": total_spent
+    }
+
+
+@app.get("/orders")
+def get_orders():
+    return {
+        "orders": orders,
+        "total_orders": len(orders)
+    }
+
+
+@app.get("/orders/{order_id}")
+def get_order(order_id: int):
+    order = next((o for o in orders if o["order_id"] == order_id), None)
+    
+    if not order:
+        raise HTTPException(status_code=404, detail=f"Order ID {order_id} not found")
+    
+    return {"order": order}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
