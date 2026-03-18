@@ -1,0 +1,231 @@
+from fastapi import FastAPI, Query, HTTPException
+from typing import Optional
+
+app = FastAPI(title="Day 6 - Search, Sort & Pagination API")
+
+products = [
+    {"id": 1, "name": "Pen Set", "price": 49, "category": "Stationery"},
+    {"id": 2, "name": "Notebook", "price": 99, "category": "Stationery"},
+    {"id": 3, "name": "Wireless Mouse", "price": 499, "category": "Electronics"},
+    {"id": 4, "name": "Laptop Stand", "price": 1299, "category": "Electronics"},
+]
+
+orders = []
+
+
+@app.get("/")
+def home():
+    return {"message": "Day 6 - Search, Sort & Pagination API"}
+
+
+@app.get("/products")
+def get_products():
+    return {"products": products, "total": len(products)}
+
+
+@app.get("/products/search/{keyword}")
+def search_products(keyword: str):
+    results = [p for p in products if keyword.lower() in p["name"].lower()]
+    
+    if not results:
+        return {
+            "keyword": keyword,
+            "message": f"No products found matching '{keyword}'",
+            "results": [],
+            "total": 0
+        }
+    
+    return {
+        "keyword": keyword,
+        "results": results,
+        "total": len(results)
+    }
+
+
+@app.get("/products/sort")
+def sort_products(
+    sort_by: str = Query("price"),
+    order: str = Query("asc")
+):
+    if sort_by not in ["price", "name"]:
+        return {
+            "error": f"Invalid sort_by '{sort_by}'. Allowed: price, name",
+            "sort_by": sort_by
+        }
+    
+    if order not in ["asc", "desc"]:
+        return {
+            "error": f"Invalid order '{order}'. Allowed: asc, desc",
+            "order": order
+        }
+    
+    sorted_products = sorted(
+        products,
+        key=lambda p: p[sort_by],
+        reverse=(order == "desc")
+    )
+    
+    return {
+        "sort_by": sort_by,
+        "order": order,
+        "products": sorted_products,
+        "total": len(sorted_products)
+    }
+
+
+@app.get("/products/page")
+def paginate_products(
+    page: int = Query(1, ge=1),
+    limit: int = Query(2, ge=1, le=20)
+):
+    total = len(products)
+    total_pages = -(-total // limit)
+    
+    start = (page - 1) * limit
+    end = start + limit
+    
+    paged_products = products[start:end]
+    
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "total_pages": total_pages,
+        "products": paged_products
+    }
+
+
+@app.get("/orders/search/{customer_name}")
+def search_orders(customer_name: str):
+    results = [o for o in orders if customer_name.lower() in o.get("customer_name", "").lower()]
+    
+    if not results:
+        return {
+            "customer_name": customer_name,
+            "message": f"No orders found for '{customer_name}'",
+            "results": [],
+            "total": 0
+        }
+    
+    return {
+        "customer_name": customer_name,
+        "results": results,
+        "total": len(results)
+    }
+
+
+@app.get("/products/sort-by-category")
+def sort_by_category():
+    electronics = sorted(
+        [p for p in products if p["category"] == "Electronics"],
+        key=lambda p: p["price"]
+    )
+    stationery = sorted(
+        [p for p in products if p["category"] == "Stationery"],
+        key=lambda p: p["price"]
+    )
+    
+    result = electronics + stationery
+    
+    return {
+        "sort_order": "Electronics first, then Stationery, by price ascending",
+        "products": result,
+        "total": len(result)
+    }
+
+
+@app.get("/products/browse")
+def browse_products(
+    keyword: Optional[str] = Query(None),
+    sort_by: str = Query("price"),
+    order: str = Query("asc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(4, ge=1, le=20)
+):
+    result = products
+    
+    if keyword:
+        result = [p for p in result if keyword.lower() in p["name"].lower()]
+    
+    if sort_by in ["price", "name"]:
+        result = sorted(result, key=lambda p: p[sort_by], reverse=(order == "desc"))
+    
+    total = len(result)
+    total_pages = -(-total // limit)
+    
+    start = (page - 1) * limit
+    paged = result[start:start + limit]
+    
+    return {
+        "keyword": keyword,
+        "sort_by": sort_by,
+        "order": order,
+        "page": page,
+        "limit": limit,
+        "total_found": total,
+        "total_pages": total_pages,
+        "products": paged
+    }
+
+
+@app.post("/orders", status_code=201)
+def create_order(
+    product_id: int = Query(..., gt=0),
+    quantity: int = Query(..., gt=0),
+    customer_name: str = Query(..., min_length=2)
+):
+    product = next((p for p in products if p["id"] == product_id), None)
+    
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    order = {
+        "order_id": len(orders) + 1,
+        "product_id": product_id,
+        "product_name": product["name"],
+        "quantity": quantity,
+        "customer_name": customer_name,
+        "total": product["price"] * quantity
+    }
+    
+    orders.append(order)
+    
+    return {
+        "message": "Order created successfully",
+        "order": order
+    }
+
+
+@app.get("/orders")
+def get_all_orders():
+    return {
+        "orders": orders,
+        "total": len(orders)
+    }
+
+
+@app.get("/orders/page")
+def get_orders_paged(
+    page: int = Query(1, ge=1),
+    limit: int = Query(3, ge=1, le=20)
+):
+    total = len(orders)
+    total_pages = -(-total // limit)
+    
+    start = (page - 1) * limit
+    end = start + limit
+    
+    paged_orders = orders[start:end]
+    
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "total_pages": total_pages,
+        "orders": paged_orders
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
